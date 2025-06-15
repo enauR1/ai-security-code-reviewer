@@ -1,0 +1,33 @@
+{
+  "vulnerabilities": [
+    {
+      "type": "SQL Injection",
+      "severity": "Critical",
+      "line_number": 9,
+      "description": "User input directly concatenated into SQL query",
+      "explanation": "This allows attackers to inject malicious SQL commands",
+      "fix": "Use parameterized queries with placeholders",
+      "cwe_id": "CWE-89"
+    },
+    {
+      "type": "Command Injection",
+      "severity": "Critical",
+      "line_number": 13,
+      "description": "User input used in os.system() call",
+      "explanation": "This allows attackers to execute arbitrary commands",
+      "fix": "Use subprocess.run() with shell=False and proper argument lists",
+      "cwe_id": "CWE-78"
+    },
+    {
+      "type": "Pickle Deserialization",
+      "severity": "Critical",
+      "line_number": 20,
+      "description": "Unsafe deserialization of user-supplied data",
+      "explanation": "This allows attackers to execute arbitrary code",
+      "fix": "Avoid deserializing user-supplied data, or use a safe deserialization method",
+      "cwe_id": "CWE-502"
+    }
+  ],
+  "security_score": 25,
+  "overall_assessment": "Code contains 3 vulnerabilities with 3 critical issues"
+}
