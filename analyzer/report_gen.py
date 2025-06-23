@@ -1,6 +1,12 @@
 import json
 from datetime import datetime
-from fpdf import FPDF
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
@@ -8,6 +14,7 @@ from typing import Dict, List, Optional, Any
 import os
 import base64
 from io import BytesIO
+import re
 
 class ReportGenerator:
     def __init__(self, company_name: str, company_logo: Optional[str] = None):
@@ -18,10 +25,10 @@ class ReportGenerator:
         
         # Color scheme for severity levels
         self.severity_colors = {
-            "Critical": (255, 0, 0),    # Red
-            "High": (255, 69, 0),       # Orange-Red
-            "Medium": (255, 165, 0),    # Orange
-            "Low": (255, 215, 0)        # Gold
+            "Critical": colors.red,
+            "High": colors.orangered,
+            "Medium": colors.orange,
+            "Low": colors.gold
         }
         
         # OWASP Top 10 mapping
@@ -37,117 +44,211 @@ class ReportGenerator:
             "Insecure Direct Object Reference": "A1:2021-Broken Access Control",
             "Security Misconfiguration": "A5:2021-Security Misconfiguration"
         }
-    
+        
+        # Initialize styles
+        self.styles = getSampleStyleSheet()
+        
+        # Add custom code style
+        self.styles.add(ParagraphStyle(
+            name='CodeStyle',
+            fontName='Courier',
+            fontSize=9,
+            leading=12,
+            spaceAfter=10
+        ))
+        
+        # Modify existing styles
+        self.styles['Heading1'].fontSize = 18
+        self.styles['Heading1'].spaceAfter = 20
+        self.styles['Heading1'].textColor = colors.HexColor('#1a1a1a')
+        
+        self.styles['Heading2'].fontSize = 14
+        self.styles['Heading2'].spaceAfter = 15
+        self.styles['Heading2'].textColor = colors.HexColor('#2a2a2a')
+        
+        # Add custom vulnerability styles
+        self.styles.add(ParagraphStyle(
+            name='VulnCritical',
+            parent=self.styles['Normal'],
+            fontSize=12,
+            spaceAfter=10,
+            textColor=colors.HexColor('#cc0000')
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='VulnHigh',
+            parent=self.styles['Normal'],
+            fontSize=12,
+            spaceAfter=10,
+            textColor=colors.HexColor('#ff4500')
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='VulnMedium',
+            parent=self.styles['Normal'],
+            fontSize=12,
+            spaceAfter=10,
+            textColor=colors.HexColor('#ff8c00')
+        ))
+        
+        self.styles.add(ParagraphStyle(
+            name='VulnLow',
+            parent=self.styles['Normal'],
+            fontSize=12,
+            spaceAfter=10,
+            textColor=colors.HexColor('#ffaa00')
+        ))
+
+    def strip_emojis(self, text: str) -> str:
+        """Remove emojis and other special characters from text"""
+        # Replace common emojis with text equivalents
+        emoji_replacements = {
+            "🔍": "[Search]",
+            "🚨": "[Alert]",
+            "⚠️": "[Warning]",
+            "✅": "[Success]",
+            "❌": "[Error]",
+            "📋": "[Report]",
+            "🔧": "[Debug]",
+            "🏆": "[Trophy]",
+            "💡": "[Info]",
+            "🔥": "[Critical]"
+        }
+        
+        for emoji, replacement in emoji_replacements.items():
+            text = text.replace(emoji, replacement)
+            
+        # Remove any remaining emojis
+        emoji_pattern = re.compile("["
+            u"\U0001F600-\U0001F64F"  # emoticons
+            u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+            u"\U0001F680-\U0001F6FF"  # transport & map symbols
+            u"\U0001F1E0-\U0001F1FF"  # flags (iOS)
+            u"\U00002702-\U000027B0"
+            u"\U000024C2-\U0001F251"
+            "]+", flags=re.UNICODE)
+        
+        return emoji_pattern.sub('', text)
+
     def generate_executive_pdf(self, analysis_results: Dict[str, Any], output_path: str) -> str:
         """Generate a concise executive summary PDF report"""
-        pdf = FPDF()
-        pdf.add_page()
+        doc = SimpleDocTemplate(output_path, pagesize=letter,
+                              rightMargin=72, leftMargin=72,
+                              topMargin=72, bottomMargin=72)
         
-        # Set margins and font
-        pdf.set_margins(20, 20, 20)
-        pdf.set_auto_page_break(auto=True, margin=20)
+        story = []
         
-        # Add header
-        self._add_header(pdf, "Executive Security Summary")
+        # Title
+        story.append(Paragraph(f"{self.company_name}", self.styles['Heading1']))
+        story.append(Paragraph(f"Executive Security Summary", self.styles['Heading2']))
+        story.append(Paragraph(f"Generated: {self.timestamp}", self.styles['Normal']))
+        story.append(Spacer(1, 20))
         
         # Security Score
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, f"Security Score: {analysis_results.get('security_score', 0)}/100", ln=True)
-        pdf.ln(5)
+        score = analysis_results.get('security_score', 0)
+        score_text = self.strip_emojis(f"Security Score: {score}/100")
+        story.append(Paragraph(score_text, self.styles['Heading2']))
+        story.append(Spacer(1, 10))
         
         # Key Findings
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Key Findings:", ln=True)
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", "", 12)
+        story.append(Paragraph("Key Findings:", self.styles['Heading2']))
         for vuln in analysis_results.get('vulnerabilities', []):
-            # Ensure text fits within page width
-            text = f"- {vuln['type']} ({vuln['severity']})"
-            if pdf.get_string_width(text) > pdf.w - 40:  # Account for margins
-                text = text[:int(len(text) * 0.8)] + "..."
-            pdf.cell(0, 10, text, ln=True)
+            # Choose style based on severity
+            severity = vuln.get('severity', 'Low')
+            if severity == 'Critical':
+                style = self.styles['VulnCritical']
+            elif severity == 'High':
+                style = self.styles['VulnHigh']
+            elif severity == 'Medium':
+                style = self.styles['VulnMedium']
+            else:
+                style = self.styles['VulnLow']
+            
+            text = self.strip_emojis(f"• {vuln['type']} ({severity})")
+            story.append(Paragraph(text, style))
         
-        pdf.ln(5)
+        story.append(Spacer(1, 20))
         
         # Overall Assessment
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Overall Assessment:", ln=True)
-        pdf.ln(5)
+        story.append(Paragraph("Overall Assessment:", self.styles['Heading2']))
+        assessment = self.strip_emojis(analysis_results.get('overall_assessment', ''))
+        story.append(Paragraph(assessment, self.styles['Normal']))
         
-        pdf.set_font("Arial", "", 12)
-        assessment = analysis_results.get('overall_assessment', '')
-        # Split long text into multiple lines
-        for line in self._wrap_text(assessment, pdf.w - 40):
-            pdf.cell(0, 10, line, ln=True)
-        
-        # Save the report
-        pdf.output(output_path)
+        # Build the PDF
+        doc.build(story)
         return output_path
-    
+
     def generate_technical_pdf(self, analysis_results: Dict[str, Any], code: str, output_path: str) -> str:
         """Generate a detailed technical PDF report with code examples"""
-        pdf = FPDF()
-        pdf.add_page()
+        doc = SimpleDocTemplate(output_path, pagesize=letter,
+                              rightMargin=72, leftMargin=72,
+                              topMargin=72, bottomMargin=72)
         
-        # Set margins and font
-        pdf.set_margins(20, 20, 20)
-        pdf.set_auto_page_break(auto=True, margin=20)
+        story = []
         
-        # Add header
-        self._add_header(pdf, "Technical Security Analysis")
+        # Title
+        story.append(Paragraph(f"{self.company_name}", self.styles['Heading1']))
+        story.append(Paragraph(f"Technical Security Analysis", self.styles['Heading2']))
+        story.append(Paragraph(f"Generated: {self.timestamp}", self.styles['Normal']))
+        story.append(Spacer(1, 20))
         
         # Security Score
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, f"Security Score: {analysis_results.get('security_score', 0)}/100", ln=True)
-        pdf.ln(5)
+        score = analysis_results.get('security_score', 0)
+        score_text = self.strip_emojis(f"Security Score: {score}/100")
+        story.append(Paragraph(score_text, self.styles['Heading2']))
+        story.append(Spacer(1, 10))
         
         # Detailed Findings
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Detailed Findings:", ln=True)
-        pdf.ln(5)
+        story.append(Paragraph("Detailed Findings:", self.styles['Heading2']))
         
         for vuln in analysis_results.get('vulnerabilities', []):
-            pdf.set_font("Arial", "B", 12)
-            # Ensure text fits within page width
-            text = f"- {vuln['type']} ({vuln['severity']})"
-            if pdf.get_string_width(text) > pdf.w - 40:
-                text = text[:int(len(text) * 0.8)] + "..."
-            pdf.cell(0, 10, text, ln=True)
+            # Choose style based on severity
+            severity = vuln.get('severity', 'Low')
+            if severity == 'Critical':
+                style = self.styles['VulnCritical']
+            elif severity == 'High':
+                style = self.styles['VulnHigh']
+            elif severity == 'Medium':
+                style = self.styles['VulnMedium']
+            else:
+                style = self.styles['VulnLow']
             
-            pdf.set_font("Arial", "", 12)
-            # Add vulnerability details with proper wrapping
+            # Vulnerability header
+            header = self.strip_emojis(f"• {vuln['type']} ({severity})")
+            story.append(Paragraph(header, style))
+            
+            # Vulnerability details
             details = [
-                f"Line: {vuln.get('line', 'N/A')}",
-                f"Description: {vuln.get('description', 'N/A')}",
-                f"Explanation: {vuln.get('explanation', 'N/A')}",
-                f"Fix: {vuln.get('fix', 'N/A')}",
-                f"CWE: {vuln.get('cwe', 'N/A')}"
+                f"<b>Line:</b> {vuln.get('line', 'N/A')}",
+                f"<b>Description:</b> {self.strip_emojis(vuln.get('description', 'N/A'))}",
+                f"<b>Explanation:</b> {self.strip_emojis(vuln.get('explanation', 'N/A'))}",
+                f"<b>Fix:</b> {self.strip_emojis(vuln.get('fix', 'N/A'))}",
+                f"<b>CWE:</b> {vuln.get('cwe', 'N/A')}"
             ]
             
             for detail in details:
-                for line in self._wrap_text(detail, pdf.w - 40):
-                    pdf.cell(0, 10, line, ln=True)
+                story.append(Paragraph(detail, self.styles['Normal']))
             
-            pdf.ln(5)
+            story.append(Spacer(1, 10))
         
         # Code Analysis
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, "Code Analysis:", ln=True)
-        pdf.ln(5)
+        story.append(Paragraph("Code Analysis:", self.styles['Heading2']))
         
-        pdf.set_font("Courier", "", 10)
-        # Split code into lines and ensure they fit
-        for line in code.split('\n'):
-            if pdf.get_string_width(line) > pdf.w - 40:
-                # Truncate long lines
-                line = line[:int(len(line) * 0.8)] + "..."
-            pdf.cell(0, 10, line, ln=True)
+        # Process code line by line
+        code_lines = code.split('\n')
+        for line in code_lines:
+            # Clean the line of any problematic characters
+            clean_line = self.strip_emojis(line)
+            # Replace tabs with spaces for consistent formatting
+            clean_line = clean_line.replace('\t', '    ')
+            # Escape special characters for PDF
+            clean_line = clean_line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            story.append(Paragraph(clean_line, self.styles['CodeStyle']))
         
-        # Save the report
-        pdf.output(output_path)
+        # Build the PDF
+        doc.build(story)
         return output_path
-    
+
     def generate_html_report(self, analysis_results: Dict[str, Any], code: str) -> str:
         """Generate an interactive HTML report"""
         # Create vulnerability distribution chart
@@ -216,41 +317,7 @@ class ReportGenerator:
         """
         
         return html_content
-    
-    def generate_json_export(self, analysis_results: Dict[str, Any]) -> str:
-        """Export analysis results in JSON format"""
-        return json.dumps(analysis_results, indent=2)
-    
-    def _add_header(self, pdf: FPDF, title: str):
-        """Add a header to the PDF with company info and timestamp"""
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, self.company_name, ln=True)
-        pdf.set_font("Arial", "", 12)
-        pdf.cell(0, 10, f"Generated: {self.timestamp}", ln=True)
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 10, title, ln=True)
-        pdf.ln(5)
-    
-    def _wrap_text(self, text: str, max_width: int) -> List[str]:
-        """Wrap text to fit within the specified width"""
-        words = text.split()
-        lines = []
-        current_line = []
-        
-        for word in words:
-            # Simple ASCII character check
-            word = ''.join(c if ord(c) < 128 else '-' for c in word)
-            if len(current_line) + len(word) + 1 <= max_width:
-                current_line.append(word)
-            else:
-                lines.append(' '.join(current_line))
-                current_line = [word]
-        
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        return lines
-    
+
     def _generate_vulnerability_html(self, analysis_results: Dict[str, Any]) -> str:
         """Generate HTML for vulnerabilities section"""
         vuln_html = ""
@@ -267,7 +334,7 @@ class ReportGenerator:
             </div>
             """
         return vuln_html
-    
+
     def _create_vulnerability_chart(self, analysis_results: Dict[str, Any]) -> str:
         """Create a vulnerability distribution chart using Plotly"""
         vuln_data = {}
@@ -290,7 +357,7 @@ class ReportGenerator:
         )
         
         return f"Plotly.newPlot('vulnChart', {fig.to_json()})"
-    
+
     def _create_risk_matrix(self, analysis_results: Dict[str, Any]) -> str:
         """Create a risk matrix visualization"""
         # Create a simple risk matrix
