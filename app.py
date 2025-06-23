@@ -348,11 +348,25 @@ def main():
         
         st.header("🔧 Configuration")
         
+        # Initialize language detector if code is present
+        default_language = "python"
+        if st.session_state.code_input.strip():
+            detector = LanguageDetector()
+            detected_lang, confidence = detector.detect_language(st.session_state.code_input.strip())
+            if detected_lang != 'unknown' and confidence > 60:
+                default_language = detected_lang
+        
+        # Use session state to persist language selection
+        if 'selected_language' not in st.session_state:
+            st.session_state.selected_language = default_language
+        
         language = st.selectbox(
             "Programming Language",
             ["python", "javascript", "java", "cpp", "csharp"],
+            index=["python", "javascript", "java", "cpp", "csharp"].index(st.session_state.selected_language),
             help="Select the programming language of your code"
         )
+        st.session_state.selected_language = language
         
         st.header("📊 Analysis Statistics")
         if st.session_state.analysis_results:
@@ -442,9 +456,20 @@ def main():
                     # Detect language mismatch before analysis
                     detector = LanguageDetector()
                     detected_lang, confidence = detector.detect_language(st.session_state.code_input.strip(), uploaded_file.name if 'uploaded_file' in locals() and uploaded_file else None)
+                    
+                    # Always show detected language and confidence
+                    st.info(f"🔍 Detected Language: **{detected_lang.capitalize()}** (Confidence: **{confidence:.0f}%**)")
+                    
+                    # Show warning only on mismatch with high confidence
                     if detected_lang != 'unknown' and detected_lang != language and confidence > 60:
                         st.warning(
-                            f"⚠️ Analysis may be inaccurate: Detected {detected_lang.capitalize()} code with {confidence:.0f}% confidence, but {language.capitalize()} is selected.")
+                            f"⚠️ **Language Mismatch**: Selected {language.capitalize()}, but detected {detected_lang.capitalize()} "
+                            f"with {confidence:.0f}% confidence. Analysis may be less accurate.")
+                        
+                        # Add suggestion for user
+                        if st.button(f"Switch to {detected_lang.capitalize()}"):
+                            st.session_state.selected_language = detected_lang
+                            st.rerun()
 
                     analyzer = AISecurityAnalyzer()
                     result = analyzer.analyze_code(st.session_state.code_input.strip(), language)
